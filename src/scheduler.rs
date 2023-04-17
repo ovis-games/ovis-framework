@@ -1,12 +1,10 @@
 use std::{
-    sync::{
-        atomic::{AtomicPtr, AtomicUsize},
-        Arc, Barrier, Condvar, Mutex, MutexGuard, PoisonError,
-    },
+    collections::VecDeque,
+    sync::{atomic::AtomicUsize, Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread::{self, JoinHandle},
 };
 
-use crate::{JobFunction, JobId, JobKind, Instance, SceneState};
+use crate::{Instance, JobFunction, JobId, JobKind, SceneState, VersionedIndexId};
 
 struct SimpleCondvar<T> {
     mutex: Mutex<T>,
@@ -26,6 +24,11 @@ impl<T> SimpleCondvar<T> {
         self.cond_var.notify_all();
     }
 
+    fn mutate_and_notify_one<F: Fn(&mut T)>(&self, f: F) {
+        f(&mut self.mutex.lock().unwrap());
+        self.cond_var.notify_one();
+    }
+
     fn get_mut(&self) -> Result<MutexGuard<'_, T>, PoisonError<MutexGuard<'_, T>>> {
         self.mutex.lock()
     }
@@ -37,125 +40,177 @@ impl<T> SimpleCondvar<T> {
         }
     }
 
+    fn wait_mut<V, P: FnMut(&mut T) -> Option<V>>(&self, mut p: P) -> V {
+        let mut guard = self.mutex.lock().unwrap();
+        loop {
+            if let Some(value) = p(&mut guard) {
+                return value;
+            }
+            guard = self.cond_var.wait(guard).unwrap();
+        }
+    }
+
+    fn notify_one(&self) {
+        self.cond_var.notify_one();
+    }
+
     fn notify_all(&self) {
         self.cond_var.notify_all();
     }
 }
 
-struct SchedulerJob {
+struct JobState {
     id: JobId,
-    finished: Arc<SimpleCondvar<bool>>,
     function: JobFunction,
-}
-
-#[derive(PartialEq)]
-enum SchedulerState {
-    WaitingToRun,
-    Running,
-    Finished,
+    dependency_count: usize,
+    dependencies_finished: AtomicUsize,
+    required_for: Vec<JobId>,
 }
 
 pub struct Scheduler {
     worker: Vec<JoinHandle<()>>,
-    schedulder_state_cvar: Arc<SimpleCondvar<SchedulerState>>,
-    jobs: Arc<Vec<SchedulerJob>>,
-    jobs_finished_barrier: Arc<Barrier>,
-    current_job: Arc<AtomicUsize>,
-    state: Arc<AtomicPtr<SceneState>>,
-    frame_number: Arc<SimpleCondvar<usize>>,
+
+    // These are the jobs without any dependencies. They can be enqueued directly at the beginning
+    // of each frame.
+    jobs_without_dependencies: Vec<JobId>,
+
+    jobs: Arc<Vec<Option<JobState>>>,
+
+    // The number of jobs. This can be different that jobs.len() if there are holes in the array.
+    job_count: usize,
+
+    // The jobs that are available for executing
+    available_jobs: Arc<SimpleCondvar<VecDeque<JobId>>>,
+
+    // The number of jobs that have been sucessfully executed. This is used to determine when there
+    // frame is complete. TODO: currently the "main" thread is woken up after each completed job.
+    // This should be changed to only be woken up by the last job.
+    jobs_finished: Arc<SimpleCondvar<usize>>,
+    // state: Arc<SceneState>,
 }
 
 impl Scheduler {
-    pub fn new(instance: &Instance, kind: JobKind, worker_count: usize) -> Self {
-        let state = Arc::new(AtomicPtr::default());
+    pub fn new(
+        instance: &Instance,
+        kind: JobKind,
+        state: Arc<SceneState>,
+        worker_count: usize,
+    ) -> Self {
         let mut worker: Vec<JoinHandle<()>> = Vec::with_capacity(worker_count);
-        let schedulder_state_cvar = Arc::new(SimpleCondvar::new(SchedulerState::WaitingToRun));
 
-        let jobs = instance
+        let mut job_count = 0;
+        let mut jobs = Vec::<Option<JobState>>::new();
+        let mut jobs_without_dependencies = Vec::<JobId>::new();
+        for (job_id, job) in instance
             .jobs()
             .into_iter()
-            .map(|(id, job)| SchedulerJob {
-                id,
-                finished: Arc::new(SimpleCondvar::new(false)),
+            .filter(|(_, job)| job.kind() == kind)
+        {
+            if job_id.index() >= jobs.len() {
+                jobs.resize_with(job_id.index() + 1, || None);
+            }
+            jobs[job_id.index()] = Some(JobState {
+                id: job_id,
                 function: job.function(),
-            })
-            .collect::<Vec<_>>();
+                dependency_count: job.dependencies().len(),
+                dependencies_finished: AtomicUsize::new(0),
+                required_for: vec![],
+            });
+            if job.dependencies().len() == 0 {
+                jobs_without_dependencies.push(job_id);
+            }
+            job_count += 1;
+        }
+
+        for (job_id, job) in instance
+            .jobs()
+            .into_iter()
+            .filter(|(_, job)| job.kind() == kind)
+        {
+            for dependency in job.dependencies() {
+                jobs[dependency.index()]
+                    .as_mut()
+                    .unwrap()
+                    .required_for
+                    .push(job_id);
+            }
+        }
+
         let jobs = Arc::new(jobs);
-        let current_job = Arc::new(AtomicUsize::new(0));
-        let jobs_finished_barrier = Arc::new(Barrier::new(worker_count + 1));
-        let frame_number = Arc::new(SimpleCondvar::new(0));
+        let available_jobs = Arc::new(SimpleCondvar::new(VecDeque::<JobId>::new()));
+        let jobs_finished = Arc::new(SimpleCondvar::new(0));
+        // let available_jobs = Arc::new(Queue::<JobId>::new());
 
         for i in 0..worker_count {
-            let schedulder_state_cvar = schedulder_state_cvar.clone();
             let jobs = jobs.clone();
-            let current_job = current_job.clone();
-            let jobs_finished_barrier = jobs_finished_barrier.clone();
-            let frame_number = frame_number.clone();
+            // let jobs_finished_barrier = jobs_finished_barrier.clone();
+            // let frame_number = frame_number.clone();
             let state = state.clone();
+            let available_jobs = available_jobs.clone();
+            let jobs_finished = jobs_finished.clone();
+            // let available_jobs = available_jobs.clone();
+
+            let jobs_finished = jobs_finished.clone();
 
             worker.push(thread::spawn(move || {
-                let mut current_frame_number = 0;
-                println!("[{i}] Spawned");
-
+                println!("[{i}]: spawned");
                 loop {
-                    // println!("[{i}] Wait for next frame");
-                    frame_number.wait(|n| {
-                        if current_frame_number != *n {
-                            current_frame_number = *n;
-                            return true;
-                        } else {
-                            return false;
-                        }
-                    });
-                    // println!("[{i}] Start frame {current_frame_number}");
-                    let state: &SceneState = unsafe { &*state.load(std::sync::atomic::Ordering::Acquire) };
+                    // println!("[{i}]: waiting for job");
+                    let job_id = available_jobs.wait_mut(|jobs| jobs.pop_front());
 
-                    loop {
-                        let job_index =
-                            current_job.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    // println!("[{i}]: executing job {}", job_id);
+                    let job = unsafe { jobs[job_id.index()].as_ref().unwrap_unchecked() };
+                    (job.function)(&state);
+                    jobs_finished.mutate_and_notify_all(|c| *c += 1);
 
-                        if job_index < jobs.len() {
-                            // println!("[{i}] Run job {}", jobs[job_index].id);
-                            (jobs[job_index].function)(state);
-                        } else {
-                            break;
+                    for dependent_job_id in &job.required_for {
+                        let dependent_job =
+                            unsafe { jobs[dependent_job_id.index()].as_ref().unwrap_unchecked() };
+                        if dependent_job
+                            .dependencies_finished
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            == dependent_job.dependency_count - 1
+                        {
+                            // print!("[{i}]: push {}", *dependent_job_id);
+                            available_jobs
+                                .mutate_and_notify_one(|jobs| jobs.push_back(*dependent_job_id));
                         }
                     }
-
-                    // println!("[{i}] Wait for frame finish");
-                    jobs_finished_barrier.wait();
                 }
             }));
         }
 
         return Self {
+            jobs_without_dependencies,
             worker,
-            schedulder_state_cvar,
             jobs,
-            jobs_finished_barrier,
-            current_job,
-            frame_number,
-            state,
+            available_jobs,
+            // state,
+            jobs_finished,
+            job_count,
         };
     }
 
-    pub fn run_jobs(&self, state: &mut SceneState) {
-        self.state
-            .store(state as *mut SceneState, std::sync::atomic::Ordering::Release);
-        self.current_job
-            .store(0, std::sync::atomic::Ordering::Release);
-        // println!(
-        //     "=== Start Frame {} ===",
-        //     self.frame_number.get_mut().unwrap()
-        // );
-        self.frame_number
-            .mutate_and_notify_all(|number| *number = number.wrapping_add(1));
+    pub fn run_jobs(&self) {
+        *self.jobs_finished.get_mut().unwrap() = 0;
+        for job in &*self.jobs {
+            if let Some(job) = job {
+                job.dependencies_finished
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
 
-        // for job in self.jobs.iter() {
-        //     job.finished.wait(|finished| *finished);
-        //     println!("job {} finished", job.id);
+        // println!("=== Start Frame ===");
+
+        // for id in &self.jobs_without_dependencies {
+        //     // println!("push: {}", *id);
+        //     self.available_jobs.mutate_and_notify_one(|jobs| jobs.push_back(*id));
         // }
-        self.jobs_finished_barrier.wait();
-        // println!("=== End Frame {} ===", self.frame_number.get_mut().unwrap());
+        // Not sure whether the above or this is faster.
+        self.available_jobs
+            .mutate_and_notify_all(|jobs| jobs.extend(self.jobs_without_dependencies.iter()));
+
+        self.jobs_finished.wait(|c| *c == self.job_count);
+        // println!("=== End Frame ===");
     }
 }

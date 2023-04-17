@@ -131,6 +131,16 @@ impl<T, Id: VersionedIndexId> IdMap<T, Id> {
         }
     }
 
+    pub fn get_mut(&mut self, id: Id) -> Option<&mut T> {
+        if self.ids.contains(id) {
+            unsafe {
+                return Some(self.values[id.index()].assume_init_mut());
+            }
+        } else {
+            return None;
+        }
+    }
+
     pub fn remove(&mut self, id: Id) -> T {
         assert!(self.contains(id));
         self.ids.free(id);

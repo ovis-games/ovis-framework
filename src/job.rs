@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use crate::{SceneState, StandardVersionedIndexId};
 
 pub type JobId = StandardVersionedIndexId<>;
 pub type JobFunction = fn(&SceneState);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JobKind {
     Setup,
     Update,
@@ -12,6 +14,7 @@ pub enum JobKind {
 pub struct Job {
     kind: JobKind,
     function: JobFunction,
+    dependencies: HashSet<JobId>,
 }
 
 impl Job {
@@ -19,7 +22,16 @@ impl Job {
         return Self {
             kind,
             function,
+            dependencies: HashSet::new(),
         };
+    }
+
+    pub fn dependencies(&self) -> &HashSet<JobId> {
+        return &self.dependencies;
+    }
+
+    pub fn add_dependency(&mut self, dependency: JobId) {
+        self.dependencies.insert(dependency);
     }
 
     pub fn function(&self) -> JobFunction {

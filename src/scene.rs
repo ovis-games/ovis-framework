@@ -1,3 +1,5 @@
+use std::{thread, sync::Arc};
+
 use crate::{IdStorage, Instance, Scheduler, JobKind};
 
 pub struct SceneState {
@@ -14,15 +16,16 @@ impl SceneState {
 }
 
 pub struct Scene {
-    state: SceneState,
+    state: Arc<SceneState>,
     scheduler: Scheduler,
 }
 
 impl Scene {
     pub fn new(instance: &Instance) -> Self {
+        let state = Arc::new(SceneState::new());
         return Self {
-            state: SceneState::new(),
-            scheduler: Scheduler::new(instance, JobKind::Update, 2),
+            scheduler: Scheduler::new(instance, JobKind::Update, state.clone(), thread::available_parallelism().map(|c| -> usize {c.into()}).unwrap_or(4)),
+            state,
         };
     }
 
@@ -35,7 +38,7 @@ impl Scene {
     }
 
     pub fn tick(&mut self, _delta_time: f32) -> bool {
-        self.scheduler.run_jobs(&mut self.state);
+        self.scheduler.run_jobs();
         return true;
     }
 }

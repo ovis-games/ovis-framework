@@ -1,4 +1,4 @@
-use std::{mem::size_of, fmt::Display};
+use std::{mem::size_of, fmt::Display, hash::Hash};
 
 // #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 // pub struct VersionedIndexId<const VERSION_BITS: usize> {
@@ -49,7 +49,7 @@ use std::{mem::size_of, fmt::Display};
 //     let next_id = id.next_version_id();
 // }
 
-pub trait VersionedIndexId: Copy + Eq + Display {
+pub trait VersionedIndexId: Copy + Eq + Display + Hash {
     const INDEX_BITS: usize;
     const VERSION_BITS: usize;
     const NUM_INDICES: usize;
@@ -67,7 +67,7 @@ pub trait VersionedIndexId: Copy + Eq + Display {
     fn next_version_id(&self) -> Self;
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct StandardVersionedIndexId<const VERSION_BITS: usize = 8> {
     id: u32,
 }
