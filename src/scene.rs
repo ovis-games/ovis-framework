@@ -1,6 +1,6 @@
 use std::{thread, sync::Arc};
 
-use crate::{IdStorage, Instance, Scheduler, JobKind};
+use crate::{IdStorage, Instance, Scheduler, JobKind, Result};
 
 pub struct SceneState {
     entities: IdStorage,
@@ -37,8 +37,7 @@ impl Scene {
         return &self.state.viewports;
     }
 
-    pub fn tick(&mut self, _delta_time: f32) -> bool {
-        self.scheduler.run_jobs();
-        return true;
+    pub fn tick(&mut self, _delta_time: f32) -> Result<()> {
+        return self.scheduler.run_jobs();
     }
 }

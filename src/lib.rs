@@ -4,6 +4,9 @@
 mod versioned_index_id;
 pub use versioned_index_id::*;
 
+mod result;
+pub use result::*;
+
 mod id_storage;
 pub use id_storage::*;
 

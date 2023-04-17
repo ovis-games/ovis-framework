@@ -1,10 +1,10 @@
 use std::{
     collections::VecDeque,
-    sync::{atomic::AtomicUsize, Arc, Condvar, Mutex, MutexGuard, PoisonError},
+    sync::{atomic::AtomicUsize, Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc},
     thread::{self, JoinHandle},
 };
 
-use crate::{Instance, JobFunction, JobId, JobKind, SceneState, VersionedIndexId};
+use crate::{Instance, JobFunction, JobId, JobKind, SceneState, VersionedIndexId, Error, SourceLocation};
 
 struct SimpleCondvar<T> {
     mutex: Mutex<T>,
@@ -82,11 +82,8 @@ pub struct Scheduler {
     // The jobs that are available for executing
     available_jobs: Arc<SimpleCondvar<VecDeque<JobId>>>,
 
-    // The number of jobs that have been sucessfully executed. This is used to determine when there
-    // frame is complete. TODO: currently the "main" thread is woken up after each completed job.
-    // This should be changed to only be woken up by the last job.
-    jobs_finished: Arc<SimpleCondvar<usize>>,
-    // state: Arc<SceneState>,
+    jobs_finished: Arc<AtomicUsize>,
+    frame_finished_receiver: mpsc::Receiver<crate::Result<()>>,
 }
 
 impl Scheduler {
@@ -138,19 +135,16 @@ impl Scheduler {
 
         let jobs = Arc::new(jobs);
         let available_jobs = Arc::new(SimpleCondvar::new(VecDeque::<JobId>::new()));
-        let jobs_finished = Arc::new(SimpleCondvar::new(0));
-        // let available_jobs = Arc::new(Queue::<JobId>::new());
+        let jobs_finished = Arc::new(AtomicUsize::new(0));
+        let (frame_finished_sender, frame_finished_receiver) = mpsc::channel::<crate::Result<()>>();
 
         for i in 0..worker_count {
             let jobs = jobs.clone();
-            // let jobs_finished_barrier = jobs_finished_barrier.clone();
-            // let frame_number = frame_number.clone();
             let state = state.clone();
             let available_jobs = available_jobs.clone();
             let jobs_finished = jobs_finished.clone();
-            // let available_jobs = available_jobs.clone();
-
-            let jobs_finished = jobs_finished.clone();
+            let job_count = job_count.clone();
+            let frame_finished_sender = frame_finished_sender.clone();
 
             worker.push(thread::spawn(move || {
                 println!("[{i}]: spawned");
@@ -160,20 +154,27 @@ impl Scheduler {
 
                     // println!("[{i}]: executing job {}", job_id);
                     let job = unsafe { jobs[job_id.index()].as_ref().unwrap_unchecked() };
-                    (job.function)(&state);
-                    jobs_finished.mutate_and_notify_all(|c| *c += 1);
-
-                    for dependent_job_id in &job.required_for {
-                        let dependent_job =
-                            unsafe { jobs[dependent_job_id.index()].as_ref().unwrap_unchecked() };
-                        if dependent_job
-                            .dependencies_finished
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            == dependent_job.dependency_count - 1
-                        {
-                            // print!("[{i}]: push {}", *dependent_job_id);
-                            available_jobs
-                                .mutate_and_notify_one(|jobs| jobs.push_back(*dependent_job_id));
+                    if let Err(error) = (job.function)(&state) {
+                        frame_finished_sender.send(Err(error)).expect("channel send failure");
+                    } else {
+                        if jobs_finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == job_count - 1 {
+                            frame_finished_sender.send(Ok(())).expect("channel send failure");
+                        } else {
+                            for dependent_job_id in &job.required_for {
+                                let dependent_job = unsafe {
+                                    jobs[dependent_job_id.index()].as_ref().unwrap_unchecked()
+                                };
+                                if dependent_job
+                                    .dependencies_finished
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    == dependent_job.dependency_count - 1
+                                {
+                                    // print!("[{i}]: push {}", *dependent_job_id);
+                                    available_jobs.mutate_and_notify_one(|jobs| {
+                                        jobs.push_back(*dependent_job_id)
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -188,11 +189,12 @@ impl Scheduler {
             // state,
             jobs_finished,
             job_count,
+            frame_finished_receiver,
         };
     }
 
-    pub fn run_jobs(&self) {
-        *self.jobs_finished.get_mut().unwrap() = 0;
+    pub fn run_jobs(&self) -> crate::Result<()> {
+        self.jobs_finished.store(0, std::sync::atomic::Ordering::Relaxed);
         for job in &*self.jobs {
             if let Some(job) = job {
                 job.dependencies_finished
@@ -210,7 +212,11 @@ impl Scheduler {
         self.available_jobs
             .mutate_and_notify_all(|jobs| jobs.extend(self.jobs_without_dependencies.iter()));
 
-        self.jobs_finished.wait(|c| *c == self.job_count);
+        match self.frame_finished_receiver.recv() {
+            Ok(result) => result,
+            Err(error) => Err(Error::new(error.to_string(), SourceLocation::here())),
+        }
+        // self.jobs_finished.wait(|c| *c == self.job_count);
         // println!("=== End Frame ===");
     }
 }

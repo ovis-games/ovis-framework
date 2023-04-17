@@ -1,9 +1,8 @@
 use std::collections::HashSet;
-
-use crate::{SceneState, StandardVersionedIndexId};
+use crate::{SceneState, StandardVersionedIndexId, Result};
 
 pub type JobId = StandardVersionedIndexId<>;
-pub type JobFunction = fn(&SceneState);
+pub type JobFunction = fn(&SceneState) -> Result<()>;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JobKind {
