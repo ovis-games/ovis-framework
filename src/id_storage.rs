@@ -165,14 +165,6 @@ impl<T, Id: VersionedIndexId> Drop for IdMap<T, Id> {
     }
 }
 
-// fn id_map<Id: VersionedIndexId>(p: (usize, &Id)) -> Option<Id> {
-//     if p.0 == p.1.index() {
-//         return Some(*p.1);
-//     } else {
-//         return None;
-//     }
-// }
-
 pub struct IdMapIntoIterator<'a, T, Id: VersionedIndexId> {
     id_iterator: <&'a IdStorage<Id> as IntoIterator>::IntoIter,
     values: &'a [MaybeUninit<T>],
@@ -189,6 +181,37 @@ impl<'a, T, Id: VersionedIndexId> Iterator for IdMapIntoIterator<'a, T, Id> {
         } else {
             return None
         }
+    }
+}
+
+pub struct IdMapMutIntoIterator<'a, T, Id: VersionedIndexId> {
+    id_iterator: <&'a IdStorage<Id> as IntoIterator>::IntoIter,
+    values: &'a mut [MaybeUninit<T>],
+}
+
+impl<'a, T, Id: VersionedIndexId> Iterator for IdMapMutIntoIterator<'a, T, Id> {
+    type Item = (Id, &'a mut T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(id) = self.id_iterator.next() {
+            unsafe {
+                return Some((id, self.values[id.index()].as_mut_ptr().as_mut().unwrap_unchecked())); // TODO: is this safe? :D
+            }
+        } else {
+            return None
+        }
+    }
+}
+
+impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a mut IdMap<T, Id> {
+    type Item = (Id, &'a mut T);
+    type IntoIter = IdMapMutIntoIterator<'a, T, Id>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return Self::IntoIter {
+            id_iterator: self.ids.into_iter(),
+            values: &mut self.values,
+        };
     }
 }
 

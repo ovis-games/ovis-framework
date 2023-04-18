@@ -122,7 +122,6 @@ fn versioned_index_id_works() {
     assert_eq!(next_id.index(), 10);
     assert_eq!(next_id.version(), 1);
 
-
     let wrapped_around = Id::from_index_and_version(23, 255).next_version_id();
     assert_eq!(wrapped_around.index(), 23);
     assert_eq!(wrapped_around.version(), 0);
