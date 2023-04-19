@@ -3,22 +3,51 @@ use winit::{
     error::OsError,
     event::*,
     event_loop::{ControlFlow, EventLoop},
-    window::{Window, WindowBuilder}, monitor::MonitorHandle,
+    monitor::MonitorHandle,
+    window::{Window, WindowBuilder},
 };
 
-use crate::{Error, IdMap, Job, JobFunction, JobId, JobKind, Scene, SceneState, SystemResources};
+use crate::{
+    Error, IdMap, Job, JobFunction, JobId, JobKind, Scene, SceneState,
+    SystemResources,
+};
+
+pub struct Gpu {
+    adapter: wgpu::Adapter,
+    shader_module: wgpu::ShaderModule,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl Gpu {
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+    
+    pub fn adapter(&self) -> &wgpu::Adapter {
+        &self.adapter
+    }
+
+    pub fn shader_module(&self) -> &wgpu::ShaderModule {
+        &self.shader_module
+    }
+}
 
 pub struct Instance {
     jobs: IdMap<Job, JobId>,
     wgpu_instance: wgpu::Instance,
-    default_adapter: Arc<wgpu::Adapter>,
+    gpus: Vec<Arc<Gpu>>,
     event_loop: EventLoop<()>,
 }
 
 impl Instance {
     pub async fn new() -> Self {
         let wgpu_instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-        let default_adapter = wgpu_instance
+        let adapter = wgpu_instance
             .request_adapter(&wgpu::RequestAdapterOptionsBase {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
@@ -27,10 +56,31 @@ impl Instance {
             .await
             .unwrap();
 
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    features: wgpu::Features::empty(),
+                    limits: wgpu::Limits::default(),
+                    label: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let shader_module = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+
+        let gpus = vec![Arc::new(Gpu {
+            device,
+            queue,
+            adapter,
+            shader_module,
+        })];
+
         let mut instance = Self {
             jobs: IdMap::new(),
             event_loop: EventLoop::new(),
-            default_adapter: Arc::new(default_adapter),
+            gpus,
             wgpu_instance,
         };
 
@@ -47,8 +97,8 @@ impl Instance {
         return &self.wgpu_instance;
     }
 
-    pub fn default_adapter(&self) -> &Arc<wgpu::Adapter> {
-        return &self.default_adapter;
+    pub fn gpus(&self) -> &Vec<Arc<Gpu>> {
+        return &self.gpus;
     }
 
     pub fn primary_monitor(&self) -> Option<MonitorHandle> {
@@ -100,7 +150,7 @@ impl Instance {
         match window_builder.build(&self.event_loop) {
             Ok(window) => {
                 let surface = unsafe { self.wgpu_instance.create_surface(&window).unwrap() };
-                scene.add_viewport(0, surface, window.inner_size());
+                scene.add_viewport(self.gpus()[0].clone(), surface, window.inner_size());
 
                 Ok(window)
             }
@@ -108,8 +158,15 @@ impl Instance {
         }
     }
 
-    pub fn register_job(&mut self, kind: JobKind, function: JobFunction) -> JobId {
-        return self.jobs.insert(Job::new(kind, function)).0;
+    pub fn register_job(
+        &mut self,
+        kind: JobKind,
+        function: JobFunction,
+    ) -> JobId {
+        return self
+            .jobs
+            .insert(Job::new(kind, function))
+            .0;
     }
 
     pub fn add_job_dependency(&mut self, job_id: JobId, dependency_id: JobId) {
@@ -124,13 +181,15 @@ impl Instance {
     }
 }
 
-pub fn clear_surface(_sr: &mut SystemResources, s: &SceneState) -> Result<(), Error> {
-    for (_id, viewport) in &*s.viewports().read().unwrap() {
-        let gpu = &s.gpus()[viewport.gpu_index()];
-        let mut encoder = gpu
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("") });
-        let color_attachment = viewport
+pub fn clear_surface(sr: &SystemResources, s: &SceneState) -> Result<(), Error> {
+    let viewport = sr.viewport().unwrap();
+
+    let gpu = viewport.gpu();
+    let mut encoder = gpu
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("") });
+    let color_attachment =
+        viewport
             .texture_view()
             .map(|view| wgpu::RenderPassColorAttachment {
                 view,
@@ -145,15 +204,16 @@ pub fn clear_surface(_sr: &mut SystemResources, s: &SceneState) -> Result<(), Er
                     store: true,
                 },
             });
-        {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(""),
-                color_attachments: &[color_attachment],
-                depth_stencil_attachment: None,
-            });
-        }
-        gpu.queue().submit(std::iter::once(encoder.finish()));
+    {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(""),
+            color_attachments: &[color_attachment],
+            depth_stencil_attachment: None,
+        });
+        render_pass.set_pipeline(sr.pipeline().unwrap());
+        render_pass.draw(0..3, 0..1);
     }
+    gpu.queue().submit(std::iter::once(encoder.finish()));
 
     Ok(())
 }

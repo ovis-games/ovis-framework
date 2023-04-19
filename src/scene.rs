@@ -3,10 +3,9 @@ use std::{
     thread,
 };
 
-use wgpu::{Adapter, Device, Queue};
 use winit::dpi::PhysicalSize;
 
-use crate::{IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId, IdMap};
+use crate::{IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId, IdMap, Gpu};
 
 pub type EntityId = StandardVersionedIndexId<8>;
 pub type ViewportId = StandardVersionedIndexId<8>;
@@ -20,15 +19,16 @@ impl EntityDescriptor {
 }
 
 pub struct Viewport {
-    gpu_index: usize,
+    gpu: Arc<Gpu>,
     surface: wgpu::Surface,
+    surface_config: wgpu::SurfaceConfiguration,
     texture: Option<wgpu::SurfaceTexture>,
     texture_view: Option<wgpu::TextureView>,
 }
 
 impl Viewport {
-    pub fn gpu_index(&self) -> usize {
-        self.gpu_index
+    pub fn gpu(&self) -> &Arc<Gpu> {
+        &self.gpu
     }
 
     pub fn surface(&self) -> &wgpu::Surface {
@@ -42,35 +42,20 @@ impl Viewport {
     pub fn texture_view(&self) -> Option<&wgpu::TextureView> {
         self.texture_view.as_ref()
     }
-}
 
-pub struct Gpu {
-    adapter: Arc<Adapter>,
-    shader_module: wgpu::ShaderModule,
-    device: Device,
-    queue: Queue,
-}
-
-impl Gpu {
-    pub fn device(&self) -> &Device {
-        &self.device
-    }
-
-    pub fn queue(&self) -> &Queue {
-        &self.queue
+    pub fn surface_config(&self) -> &wgpu::SurfaceConfiguration {
+        &self.surface_config
     }
 }
 
 pub struct SceneState {
-    gpus: Arc<Vec<Gpu>>,
     entities: Arc<RwLock<IdStorage<EntityId>>>,
     viewports: Arc<RwLock<IdMap<Viewport, ViewportId>>>,
 }
 
 impl SceneState {
-    pub fn new(gpus: Vec<Gpu>) -> Self {
+    pub fn new() -> Self {
         return Self {
-            gpus: Arc::new(gpus),
             entities: Arc::new(RwLock::new(IdStorage::new())),
             viewports: Arc::new(RwLock::new(IdMap::new())),
         };
@@ -83,40 +68,20 @@ impl SceneState {
     pub fn viewports(&self) -> &RwLock<IdMap<Viewport, ViewportId>> {
         self.viewports.as_ref()
     }
-
-    pub fn gpus(&self) -> &[Gpu] {
-        self.gpus.as_ref()
-    }
 }
 
 pub struct Scene {
     game_time: f32,
     state: Arc<SceneState>,
     scheduler: Scheduler,
+    viewports_changed: bool,
 }
 
 impl Scene {
-    pub async fn new<A: IntoIterator<Item = Arc<Adapter>>>(instance: &Instance, adapters: A) -> Self {
-        let mut gpus = vec![];
-        for adapter in adapters {
-            let (device, queue) = adapter
-                .request_device(
-                    &wgpu::DeviceDescriptor {
-                        features: wgpu::Features::empty(),
-                        limits: wgpu::Limits::default(),
-                        label: None,
-                    },
-                    None,
-                )
-                .await
-                .unwrap();
-
-            let shader_module = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-            gpus.push(Gpu { device, queue, adapter, shader_module });
-        }
-        let state = Arc::new(SceneState::new(gpus));
-
+    pub async fn new(instance: &Instance) -> Self {
+        let state = Arc::new(SceneState::new());
         return Self {
+            viewports_changed: false,
             game_time: 0.0,
             scheduler: Scheduler::new(
                 instance,
@@ -130,9 +95,8 @@ impl Scene {
         };
     }
 
-    pub fn add_viewport(&mut self, adapter_index: usize, surface: wgpu::Surface, size: PhysicalSize<u32>) -> ViewportId {
-        let gpu = &self.state.gpus()[0];
-        let surface_caps = surface.get_capabilities(&gpu.adapter);
+    pub fn add_viewport(&mut self, gpu: Arc<Gpu>, surface: wgpu::Surface, size: PhysicalSize<u32>) -> ViewportId {
+        let surface_caps = surface.get_capabilities(&gpu.adapter());
         let surface_format = surface_caps.formats.iter()
             .copied()
             .filter(|f| f.describe().srgb)
@@ -148,7 +112,8 @@ impl Scene {
             view_formats: vec![],
         };
         surface.configure(&gpu.device(), &config);
-        self.viewports().write().unwrap().insert(Viewport { gpu_index: adapter_index, surface, texture: None, texture_view: None }).0
+        self.viewports_changed = true;
+        self.viewports().write().unwrap().insert(Viewport { gpu, surface, texture: None, texture_view: None, surface_config: config }).0
     }
 
     pub fn entities(&self) -> &Arc<RwLock<IdStorage>> {
@@ -160,6 +125,10 @@ impl Scene {
     }
 
     pub fn tick(&mut self, delta_time: f32) -> Result<()> {
+        if self.viewports_changed {
+            self.scheduler.configure_pipelines();
+        }
+
         for (_id, viewport) in &mut *self.viewports().write().unwrap() {
             let texture = viewport.surface().get_current_texture().unwrap();
             viewport.texture_view = Some(texture.texture.create_view(&wgpu::TextureViewDescriptor::default()));
