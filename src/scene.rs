@@ -5,7 +5,9 @@ use std::{
 
 use winit::dpi::PhysicalSize;
 
-use crate::{IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId, IdMap, Gpu};
+use crate::{
+    Gpu, IdMap, IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId,
+};
 
 pub type EntityId = StandardVersionedIndexId<8>;
 pub type ViewportId = StandardVersionedIndexId<8>;
@@ -50,7 +52,7 @@ impl Viewport {
 
 pub struct SceneState {
     entities: Arc<RwLock<IdStorage<EntityId>>>,
-    viewports: Arc<RwLock<IdMap<Viewport, ViewportId>>>,
+    viewports: Arc<RwLock<IdMap<ViewportId, Viewport>>>,
 }
 
 impl SceneState {
@@ -65,7 +67,7 @@ impl SceneState {
         self.entities.as_ref()
     }
 
-    pub fn viewports(&self) -> &RwLock<IdMap<Viewport, ViewportId>> {
+    pub fn viewports(&self) -> &RwLock<IdMap<ViewportId, Viewport>> {
         self.viewports.as_ref()
     }
 }
@@ -95,9 +97,16 @@ impl Scene {
         };
     }
 
-    pub fn add_viewport(&mut self, gpu: Arc<Gpu>, surface: wgpu::Surface, size: PhysicalSize<u32>) -> ViewportId {
+    pub fn add_viewport(
+        &mut self,
+        gpu: Arc<Gpu>,
+        surface: wgpu::Surface,
+        size: PhysicalSize<u32>,
+    ) -> ViewportId {
         let surface_caps = surface.get_capabilities(&gpu.adapter());
-        let surface_format = surface_caps.formats.iter()
+        let surface_format = surface_caps
+            .formats
+            .iter()
             .copied()
             .filter(|f| f.describe().srgb)
             .next()
@@ -113,14 +122,24 @@ impl Scene {
         };
         surface.configure(&gpu.device(), &config);
         self.viewports_changed = true;
-        self.viewports().write().unwrap().insert(Viewport { gpu, surface, texture: None, texture_view: None, surface_config: config }).0
+        self.viewports()
+            .write()
+            .unwrap()
+            .insert(Viewport {
+                gpu,
+                surface,
+                texture: None,
+                texture_view: None,
+                surface_config: config,
+            })
+            .0
     }
 
     pub fn entities(&self) -> &Arc<RwLock<IdStorage>> {
         return &self.state.entities;
     }
 
-    pub fn viewports(&self) -> &Arc<RwLock<IdMap<Viewport, ViewportId>>> {
+    pub fn viewports(&self) -> &Arc<RwLock<IdMap<ViewportId, Viewport>>> {
         return &self.state.viewports;
     }
 
@@ -131,7 +150,11 @@ impl Scene {
 
         for (_id, viewport) in &mut *self.viewports().write().unwrap() {
             let texture = viewport.surface().get_current_texture().unwrap();
-            viewport.texture_view = Some(texture.texture.create_view(&wgpu::TextureViewDescriptor::default()));
+            viewport.texture_view = Some(
+                texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+            );
             viewport.texture = Some(texture);
         }
         self.game_time += delta_time;

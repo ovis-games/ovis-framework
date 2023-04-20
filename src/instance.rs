@@ -38,7 +38,7 @@ impl Gpu {
 }
 
 pub struct Instance {
-    jobs: IdMap<Job, JobId>,
+    jobs: IdMap<JobId, Job>,
     wgpu_instance: wgpu::Instance,
     gpus: Vec<Arc<Gpu>>,
     event_loop: EventLoop<()>,
@@ -89,7 +89,7 @@ impl Instance {
         return instance;
     }
 
-    pub fn jobs(&self) -> &IdMap<Job, JobId> {
+    pub fn jobs(&self) -> &IdMap<JobId, Job> {
         return &self.jobs;
     }
 

@@ -96,12 +96,12 @@ fn id_storage_works() {
     assert_eq!(storage.into_iter().collect::<Vec<_>>(), vec![second_id]);
 }
 
-pub struct IdMap<T, Id: VersionedIndexId = StandardVersionedIndexId> {
+pub struct IdMap<Id: VersionedIndexId, T> {
     ids: IdStorage<Id>,
     values: Vec<MaybeUninit<T>>,
 }
 
-impl<T, Id: VersionedIndexId> IdMap<T, Id> {
+impl<Id: VersionedIndexId, T> IdMap<Id, T> {
     pub fn new() -> Self {
         Self {
             ids: IdStorage::new(),
@@ -155,7 +155,7 @@ impl<T, Id: VersionedIndexId> IdMap<T, Id> {
 }
 
 
-impl<T, Id: VersionedIndexId> Drop for IdMap<T, Id> {
+impl<Id: VersionedIndexId, T> Drop for IdMap<Id, T> {
     fn drop(&mut self) {
         for id in &self.ids {
             unsafe {
@@ -165,12 +165,12 @@ impl<T, Id: VersionedIndexId> Drop for IdMap<T, Id> {
     }
 }
 
-pub struct IdMapIntoIterator<'a, T, Id: VersionedIndexId> {
+pub struct IdMapIntoIterator<'a, Id: VersionedIndexId, T> {
     id_iterator: <&'a IdStorage<Id> as IntoIterator>::IntoIter,
     values: &'a [MaybeUninit<T>],
 }
 
-impl<'a, T, Id: VersionedIndexId> Iterator for IdMapIntoIterator<'a, T, Id> {
+impl<'a, Id: VersionedIndexId, T> Iterator for IdMapIntoIterator<'a, Id, T> {
     type Item = (Id, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -184,12 +184,12 @@ impl<'a, T, Id: VersionedIndexId> Iterator for IdMapIntoIterator<'a, T, Id> {
     }
 }
 
-pub struct IdMapMutIntoIterator<'a, T, Id: VersionedIndexId> {
+pub struct IdMapMutIntoIterator<'a, Id: VersionedIndexId, T> {
     id_iterator: <&'a IdStorage<Id> as IntoIterator>::IntoIter,
     values: &'a mut [MaybeUninit<T>],
 }
 
-impl<'a, T, Id: VersionedIndexId> Iterator for IdMapMutIntoIterator<'a, T, Id> {
+impl<'a, Id: VersionedIndexId, T> Iterator for IdMapMutIntoIterator<'a, Id, T> {
     type Item = (Id, &'a mut T);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -203,9 +203,9 @@ impl<'a, T, Id: VersionedIndexId> Iterator for IdMapMutIntoIterator<'a, T, Id> {
     }
 }
 
-impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a mut IdMap<T, Id> {
+impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a mut IdMap<Id, T> {
     type Item = (Id, &'a mut T);
-    type IntoIter = IdMapMutIntoIterator<'a, T, Id>;
+    type IntoIter = IdMapMutIntoIterator<'a, Id, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         return Self::IntoIter {
@@ -215,9 +215,9 @@ impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a mut IdMap<T, Id> {
     }
 }
 
-impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a IdMap<T, Id> {
+impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a IdMap<Id, T> {
     type Item = (Id, &'a T);
-    type IntoIter = IdMapIntoIterator<'a, T, Id>;
+    type IntoIter = IdMapIntoIterator<'a, Id, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         return Self::IntoIter {
@@ -234,10 +234,10 @@ mod test {
 
     #[test]
     fn id_map_works() {
-        // type Id = StandardVersionedIndexId;
+        type Id = StandardVersionedIndexId;
         type T = Rc<i32>;
 
-        let mut map = IdMap::<T>::new();
+        let mut map = IdMap::<Id, T>::new();
         assert_eq!(map.len(), 0);
         assert_eq!(map.into_iter().collect::<Vec<_>>(), []);
 
