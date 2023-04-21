@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use crate::{SceneState, StandardVersionedIndexId, Result, SystemResources};
 
 // A `Job` corresponds to a `System` in the classical ECS terminology.
@@ -34,14 +34,6 @@ impl Job {
             // render_pass_descriptor,
         };
     }
-
-    // pub fn is_executed_per_viewport(&self) -> bool {
-    //     return self.render_pass_descriptor.is_some();
-    // }
-
-    // pub fn render_pass_descriptor(&self) -> &Option<RenderPassJobDescriptor> {
-    //     return &self.render_pass_descriptor;
-    // }
 
     pub fn dependencies(&self) -> &HashSet<JobId> {
         return &self.dependencies;

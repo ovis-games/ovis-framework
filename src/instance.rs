@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant, any::Any};
 use winit::{
     error::OsError,
     event::*,
@@ -9,7 +9,7 @@ use winit::{
 
 use crate::{
     Error, IdMap, Job, JobFunction, JobId, JobKind, Scene, SceneState,
-    SystemResources,
+    SystemResources, ResourceKind, ResourceStorage, IdMappedResourceStorage, EntityId, VersionedIndexId, Resource, ResourceId, 
 };
 
 pub struct Gpu {
@@ -37,11 +37,20 @@ impl Gpu {
     }
 }
 
+
+struct ResourceRegistration {
+    kind: ResourceKind,
+    storage_factory: fn() -> Box<dyn ResourceStorage>,
+}
+
+
 pub struct Instance {
     jobs: IdMap<JobId, Job>,
+    registered_resources: IdMap<JobId, ResourceRegistration>,
     wgpu_instance: wgpu::Instance,
     gpus: Vec<Arc<Gpu>>,
     event_loop: EventLoop<()>,
+    position_id: ResourceId,
 }
 
 impl Instance {
@@ -79,18 +88,34 @@ impl Instance {
 
         let mut instance = Self {
             jobs: IdMap::new(),
+            registered_resources: IdMap::new(),
             event_loop: EventLoop::new(),
             gpus,
             wgpu_instance,
+            position_id: ResourceId::from_index(0),
         };
 
         instance.register_job(JobKind::Update, clear_surface);
+        instance.position_id = instance.register_entity_component::<Position>();
 
         return instance;
     }
 
     pub fn jobs(&self) -> &IdMap<JobId, Job> {
         return &self.jobs;
+    }
+
+    pub fn make_resource_storages(&self) -> Vec<Option<Box<dyn ResourceStorage>>> {
+        let mut vec = Vec::new();
+
+        for (resource_id, resource) in &self.registered_resources {
+            if resource_id.index() >= vec.len() {
+                vec.resize_with(resource_id.index() + 1, || None);
+            }
+            vec[resource_id.index()] = Some((resource.storage_factory)());
+        }
+
+        return vec;
     }
 
     pub fn wgpu(&self) -> &wgpu::Instance {
@@ -103,6 +128,10 @@ impl Instance {
 
     pub fn primary_monitor(&self) -> Option<MonitorHandle> {
         return self.event_loop.primary_monitor();
+    }
+
+    pub fn position_id(&self) -> ResourceId {
+        return self.position_id;
     }
 
     pub fn run<S: IntoIterator<Item = Scene>>(self, scenes: S) {
@@ -179,7 +208,21 @@ impl Instance {
             }
         }
     }
+
+    pub fn register_entity_component<C: Resource + 'static>(&mut self) -> ResourceId {
+        return self.registered_resources.insert(ResourceRegistration {
+            kind: ResourceKind::EntityComponent,
+            storage_factory: IdMappedResourceStorage::<EntityId, C>::factory,
+        }).0;
+    }
 }
+
+pub struct Position {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Resource for Position {}
 
 pub fn clear_surface(sr: &SystemResources, s: &SceneState) -> Result<(), Error> {
     let viewport = sr.viewport().unwrap();
@@ -205,6 +248,13 @@ pub fn clear_surface(sr: &SystemResources, s: &SceneState) -> Result<(), Error> 
                 },
             });
     {
+        let mut position_storage = s.resource_storage(ResourceId::from_index_and_version(0, 0)).unwrap().write().unwrap();
+        let position_storage = (&mut **position_storage as &mut dyn Any).downcast_mut::<IdMappedResourceStorage<EntityId, Position>>().unwrap();
+
+        for (id, p) in position_storage.iter() {
+            println!("{}: ({}, {})", id, p.x, p.y);
+        }
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(""),
             color_attachments: &[color_attachment],

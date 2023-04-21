@@ -6,7 +6,7 @@ use std::{
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    Gpu, IdMap, IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId,
+    Gpu, IdMap, IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId, ResourceStorage, ResourceId, VersionedIndexId,
 };
 
 pub type EntityId = StandardVersionedIndexId<8>;
@@ -53,13 +53,15 @@ impl Viewport {
 pub struct SceneState {
     entities: Arc<RwLock<IdStorage<EntityId>>>,
     viewports: Arc<RwLock<IdMap<ViewportId, Viewport>>>,
+    resources: Arc<Vec<Option<RwLock<Box<dyn ResourceStorage>>>>>,
 }
 
 impl SceneState {
-    pub fn new() -> Self {
+    pub fn new(instance: &Instance) -> Self {
         return Self {
             entities: Arc::new(RwLock::new(IdStorage::new())),
             viewports: Arc::new(RwLock::new(IdMap::new())),
+            resources: Arc::new(instance.make_resource_storages().into_iter().map(|r| r.map(|r| RwLock::new(r))).collect()),
         };
     }
 
@@ -69,6 +71,10 @@ impl SceneState {
 
     pub fn viewports(&self) -> &RwLock<IdMap<ViewportId, Viewport>> {
         self.viewports.as_ref()
+    }
+
+    pub fn resource_storage(&self, id: ResourceId) -> Option<&RwLock<Box<dyn ResourceStorage>>> {
+        return self.resources[id.index()].as_ref();
     }
 }
 
@@ -81,7 +87,9 @@ pub struct Scene {
 
 impl Scene {
     pub async fn new(instance: &Instance) -> Self {
-        let state = Arc::new(SceneState::new());
+        let state = Arc::new(SceneState::new(instance));
+
+
         return Self {
             viewports_changed: false,
             game_time: 0.0,
@@ -141,6 +149,10 @@ impl Scene {
 
     pub fn viewports(&self) -> &Arc<RwLock<IdMap<ViewportId, Viewport>>> {
         return &self.state.viewports;
+    }
+
+    pub fn resource_storage(&self, resource_id: ResourceId) -> Option<&RwLock<Box<dyn ResourceStorage>>> {
+        return self.state.resources[resource_id.index()].as_ref();
     }
 
     pub fn tick(&mut self, delta_time: f32) -> Result<()> {

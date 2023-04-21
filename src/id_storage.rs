@@ -154,7 +154,6 @@ impl<Id: VersionedIndexId, T> IdMap<Id, T> {
     }
 }
 
-
 impl<Id: VersionedIndexId, T> Drop for IdMap<Id, T> {
     fn drop(&mut self) {
         for id in &self.ids {

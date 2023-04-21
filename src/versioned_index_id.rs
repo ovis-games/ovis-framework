@@ -49,7 +49,7 @@ use std::{mem::size_of, fmt::Display, hash::Hash};
 //     let next_id = id.next_version_id();
 // }
 
-pub trait VersionedIndexId: Copy + Eq + Display + Hash {
+pub trait VersionedIndexId: Send + Sync + Copy + Eq + Display + Hash {
     const INDEX_BITS: usize;
     const VERSION_BITS: usize;
     const NUM_INDICES: usize;
