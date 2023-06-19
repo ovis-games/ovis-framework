@@ -72,6 +72,16 @@ pub struct StandardVersionedIndexId<const VERSION_BITS: usize = 8> {
     id: u32,
 }
 
+impl<const VERSION_BITS: usize> StandardVersionedIndexId<VERSION_BITS> {
+    pub const fn from_index_and_version(index: u32, version: u32) -> Self {
+        assert!(index < (1u32 << Self::INDEX_BITS));
+        assert!(version < (1u32 << Self::VERSION_BITS));
+        return Self {
+            id: index + (version << Self::INDEX_BITS),
+        }
+    }
+}
+
 impl<const VERSION_BITS: usize> VersionedIndexId for StandardVersionedIndexId<VERSION_BITS> {
     const INDEX_BITS: usize = size_of::<i32>() * 8 - VERSION_BITS;
     const VERSION_BITS: usize = VERSION_BITS;
@@ -100,7 +110,7 @@ impl<const VERSION_BITS: usize> VersionedIndexId for StandardVersionedIndexId<VE
     fn index(&self) -> usize { <u32 as TryInto<usize>>::try_into(self.id).unwrap() & Self::MAX_INDEX }
 
     fn next_version_id(&self) -> Self {
-        return Self::from_index_and_version(self.index(), (self.version() + 1) & Self::MAX_VERSION);
+        return VersionedIndexId::from_index_and_version(self.index(), (self.version() + 1) & Self::MAX_VERSION);
     }
 }
 

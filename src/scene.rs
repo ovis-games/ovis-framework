@@ -1,12 +1,15 @@
 use std::{
-    sync::{Arc, RwLock},
-    thread,
+    any::Any,
+    sync::{Arc, RwLock, RwLockWriteGuard},
+    thread, marker::PhantomData,
 };
 
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    Gpu, IdMap, IdStorage, Instance, JobKind, Result, Scheduler, StandardVersionedIndexId, ResourceStorage, ResourceId, VersionedIndexId,
+    make_resource_storages, EntityComponent, Gpu, IdMap, IdMappedResourceStorage, IdStorage,
+    Instance, JobKind, Resource, ResourceId, ResourceStorage, Result, Scheduler,
+    StandardVersionedIndexId, VersionedIndexId,
 };
 
 pub type EntityId = StandardVersionedIndexId<8>;
@@ -50,18 +53,71 @@ impl Viewport {
     }
 }
 
+struct ResourceBindings {
+    group_layout: wgpu::BindGroupLayout,
+    group: wgpu::BindGroup,
+}
+
 pub struct SceneState {
     entities: Arc<RwLock<IdStorage<EntityId>>>,
     viewports: Arc<RwLock<IdMap<ViewportId, Viewport>>>,
     resources: Arc<Vec<Option<RwLock<Box<dyn ResourceStorage>>>>>,
+    resource_bindings: Arc<Vec<ResourceBindings>>,
 }
 
 impl SceneState {
     pub fn new(instance: &Instance) -> Self {
+        let mut bind_group_entries = Vec::new();
+        let resources = make_resource_storages(instance);
+
+        for r in &resources {
+            if let Some(r) = r {
+                bind_group_entries.append(&mut r.bind_group_layout_entries());
+            }
+        }
+
+        let bindings = instance
+            .gpus()
+            .iter()
+            .map(|gpu| {
+                let group_layout =
+                    gpu.device()
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some("Resources"),
+                            entries: &bind_group_entries,
+                        });
+
+                let mut entries = Vec::new();
+
+                for r in &resources {
+                    if let Some(r) = r {
+                        entries.append(&mut r.bind_group_entries(gpu.index()));
+                    }
+                }
+
+                let group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Resources"),
+                    layout: &group_layout,
+                    entries: &entries,
+                });
+
+                return ResourceBindings {
+                    group_layout,
+                    group,
+                };
+            })
+            .collect();
+
         return Self {
             entities: Arc::new(RwLock::new(IdStorage::new())),
             viewports: Arc::new(RwLock::new(IdMap::new())),
-            resources: Arc::new(instance.make_resource_storages().into_iter().map(|r| r.map(|r| RwLock::new(r))).collect()),
+            resources: Arc::new(
+                resources
+                    .into_iter()
+                    .map(|r| r.map(|r| RwLock::new(r)))
+                    .collect(),
+            ),
+            resource_bindings: Arc::new(bindings),
         };
     }
 
@@ -76,6 +132,44 @@ impl SceneState {
     pub fn resource_storage(&self, id: ResourceId) -> Option<&RwLock<Box<dyn ResourceStorage>>> {
         return self.resources[id.index()].as_ref();
     }
+
+    pub fn resource_bind_group_layout(&self, gpu_index: usize) -> &wgpu::BindGroupLayout {
+        &self.resource_bindings[gpu_index].group_layout
+    }
+
+    pub fn resource_bind_group(&self, gpu_index: usize) -> &wgpu::BindGroup {
+        &self.resource_bindings[gpu_index].group
+    }
+}
+
+pub struct MutableResourceStorageAccess<'scene, R: Resource> {
+    guard: RwLockWriteGuard<'scene, Box<dyn ResourceStorage>>,
+    phantom: PhantomData<R>,
+    // storage: &'scene R::Storage,
+}
+
+impl<'scene, R: Resource> MutableResourceStorageAccess<'scene, R> {
+    fn new(guard: RwLockWriteGuard<'scene, Box<dyn ResourceStorage>>) -> Self {
+        return Self { guard, phantom: PhantomData };
+    }
+}
+
+impl<R: Resource> std::ops::Deref for MutableResourceStorageAccess<'_, R> {
+    type Target = R::Storage;
+
+    fn deref(&self) -> &Self::Target {
+        return (&**self.guard as &dyn Any)
+            .downcast_ref::<R::Storage>()
+            .unwrap();
+    }
+}
+
+impl<R: Resource> std::ops::DerefMut for MutableResourceStorageAccess<'_, R> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        return (&mut **self.guard as &mut dyn Any)
+            .downcast_mut::<R::Storage>()
+            .unwrap();
+    }
 }
 
 pub struct Scene {
@@ -88,7 +182,6 @@ pub struct Scene {
 impl Scene {
     pub async fn new(instance: &Instance) -> Self {
         let state = Arc::new(SceneState::new(instance));
-
 
         return Self {
             viewports_changed: false,
@@ -151,8 +244,18 @@ impl Scene {
         return &self.state.viewports;
     }
 
-    pub fn resource_storage(&self, resource_id: ResourceId) -> Option<&RwLock<Box<dyn ResourceStorage>>> {
+    pub fn resource_storage(
+        &self,
+        resource_id: ResourceId,
+    ) -> Option<&RwLock<Box<dyn ResourceStorage>>> {
         return self.state.resources[resource_id.index()].as_ref();
+    }
+
+    pub fn resource_storage_mut<R: Resource>(&self) -> Option<MutableResourceStorageAccess<'_, R>> {
+        if let Some(storage) = self.state.resources[R::id().index()].as_ref() {
+            return Some(MutableResourceStorageAccess::new(storage.write().unwrap()));
+        }
+        todo!();
     }
 
     pub fn tick(&mut self, delta_time: f32) -> Result<()> {

@@ -23,5 +23,11 @@ pub use scheduler::*;
 mod scene;
 pub use scene::*;
 
+mod gpu;
+pub use gpu::*;
+
 mod instance;
 pub use instance::*;
+
+mod runtime;
+pub use runtime::*;

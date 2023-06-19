@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    EntityDescriptor, EntityId, Error, Instance, JobFunction, JobId, JobKind, SceneState,
-    SourceLocation, Viewport, ViewportId,
+    EntityDescriptor, EntityId, Error, Instance, JobFunction, JobId, JobKind, ResourceAccess,
+    SceneState, SourceLocation, Viewport, ViewportId,
 };
 
 struct SimpleCondvar<T> {
@@ -109,6 +109,7 @@ struct JobState {
     dependencies_finished: AtomicUsize,
     required_for: Vec<usize>,
     executed_per_viewport: bool,
+    resource_access: Vec<ResourceAccess>,
 }
 
 struct ScheduledJob {
@@ -156,8 +157,7 @@ impl Scheduler {
         let mut regular_job_count = 0_usize;
         let mut per_viewport_job_count = 0_usize;
 
-        for (job_id, job) in instance
-            .jobs()
+        for (job_id, job) in crate::jobs()
             .into_iter()
             .filter(|(_, job)| job.kind() == kind)
         {
@@ -171,6 +171,7 @@ impl Scheduler {
                 dependencies_finished: AtomicUsize::new(0),
                 required_for: vec![],
                 executed_per_viewport: true,
+                resource_access: job.resource_access().to_vec(),
             });
             per_viewport_job_count += 1;
             if job.dependencies().len() == 0 {
@@ -178,8 +179,7 @@ impl Scheduler {
             }
         }
 
-        for (job_id, job) in instance
-            .jobs()
+        for (job_id, job) in crate::jobs()
             .into_iter()
             .filter(|(_, job)| job.kind() == kind)
         {
@@ -331,10 +331,29 @@ impl Scheduler {
 
         for (job_index, job) in self.jobs.iter().enumerate() {
             for (viewport_id, viewport) in &*viewports {
+                let mut resource_storages = Vec::new();
+
+                for access in &job.resource_access {
+                    match access {
+                        ResourceAccess::Read(resource_id) => {
+                            resource_storages.push(
+                                self.state
+                                    .resource_storage(*resource_id)
+                                    .unwrap()
+                                    .read()
+                                    .unwrap(),
+                            );
+                        }
+                    }
+                }
+
                 let render_pipeline_layout = viewport.gpu().device().create_pipeline_layout(
                     &wgpu::PipelineLayoutDescriptor {
                         label: Some("Render Pipeline Layout"),
-                        bind_group_layouts: &[],
+                        bind_group_layouts: &[
+                            viewport.gpu().system_bind_group_layout(),
+                            self.state.resource_bind_group_layout(0),
+                        ],
                         push_constant_ranges: &[],
                     },
                 );
