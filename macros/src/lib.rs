@@ -1,6 +1,6 @@
 #![feature(proc_macro_quote)]
 
-use proc_macro::{TokenStream, quote};
+use proc_macro::TokenStream;
 
 #[proc_macro_derive(EntityComponent)]
 pub fn derive_answer_fn(item: TokenStream) -> TokenStream {
@@ -13,7 +13,9 @@ pub fn derive_answer_fn(item: TokenStream) -> TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
     println!("package name: {}", crate_name);
 
-    tokens.extend(format!("
+    tokens.extend(
+        format!(
+            "
 static mut {0}_ID: ResourceId = ResourceId::from_index_and_version(0, 0);
 
 impl EntityComponent for {1} {{
@@ -22,7 +24,13 @@ impl EntityComponent for {1} {{
             return {0}_ID;
         }}
     }}
-}}", identifier.to_uppercase(), identifier).parse::<TokenStream>().unwrap());
+}}",
+            identifier.to_uppercase(),
+            identifier
+        )
+        .parse::<TokenStream>()
+        .unwrap(),
+    );
 
     return tokens;
 }

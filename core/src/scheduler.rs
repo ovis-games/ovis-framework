@@ -143,7 +143,7 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(
-        instance: &Instance,
+        _instance: &Instance,
         kind: JobKind,
         state: Arc<SceneState>,
         worker_count: usize,

@@ -244,28 +244,27 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> IdMappedResourceStor
 
     pub fn update_gpu_buffers(&self) {
         for buffer in &self.gpu_buffers {
-            let slice = unsafe {
+            let resource_buffer_slice = unsafe {
                 std::slice::from_raw_parts(
                     self.resources.as_ptr() as *const u8,
                     self.resources.len() * std::mem::size_of::<R>(),
                 )
             };
+            buffer
+                .gpu
+                .queue()
+                .write_buffer(&buffer.resource_buffer, 0, resource_buffer_slice);
 
-            let slice_2 = unsafe {
+            let reverse_array_slice = unsafe {
                 std::slice::from_raw_parts(
                     self.reverse_array.as_ptr() as *const u8,
                     self.reverse_array.len() * std::mem::size_of::<Id>(),
                 )
             };
-
             buffer
                 .gpu
                 .queue()
-                .write_buffer(&buffer.resource_buffer, 0, slice);
-            buffer
-                .gpu
-                .queue()
-                .write_buffer(&buffer.reverse_array, 0, slice_2);
+                .write_buffer(&buffer.reverse_array, 0, reverse_array_slice);
         }
     }
 

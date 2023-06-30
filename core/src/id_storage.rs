@@ -226,7 +226,7 @@ impl<'a, Id: VersionedIndexId, T> IntoIterator for &'a IdMap<Id, T> {
     }
 }
 
-
+#[cfg(test)]
 mod test {
     use std::rc::Rc;
     use super::*;

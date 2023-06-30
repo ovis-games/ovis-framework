@@ -7,7 +7,7 @@ use std::{
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    make_resource_storages, EntityComponent, Gpu, IdMap, IdMappedResourceStorage, IdStorage,
+    make_resource_storages, Gpu, IdMap, IdStorage,
     Instance, JobKind, Resource, ResourceId, ResourceStorage, Result, Scheduler,
     StandardVersionedIndexId, VersionedIndexId,
 };
@@ -133,6 +133,13 @@ impl SceneState {
         return self.resources[id.index()].as_ref();
     }
 
+    pub fn resource_storage_mut<R: Resource>(&self) -> Option<MutableResourceStorageAccess<'_, R>> {
+        if let Some(storage) = self.resources[R::id().index()].as_ref() {
+            return Some(MutableResourceStorageAccess::new(storage.write().unwrap()));
+        }
+        todo!();
+    }
+
     pub fn resource_bind_group_layout(&self, gpu_index: usize) -> &wgpu::BindGroupLayout {
         &self.resource_bindings[gpu_index].group_layout
     }
@@ -198,6 +205,10 @@ impl Scene {
         };
     }
 
+    pub fn state(&self) -> &Arc<SceneState> {
+        &self.state
+    }
+
     pub fn add_viewport(
         &mut self,
         gpu: Arc<Gpu>,
@@ -249,13 +260,6 @@ impl Scene {
         resource_id: ResourceId,
     ) -> Option<&RwLock<Box<dyn ResourceStorage>>> {
         return self.state.resources[resource_id.index()].as_ref();
-    }
-
-    pub fn resource_storage_mut<R: Resource>(&self) -> Option<MutableResourceStorageAccess<'_, R>> {
-        if let Some(storage) = self.state.resources[R::id().index()].as_ref() {
-            return Some(MutableResourceStorageAccess::new(storage.write().unwrap()));
-        }
-        todo!();
     }
 
     pub fn tick(&mut self, delta_time: f32) -> Result<()> {
