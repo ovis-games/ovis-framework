@@ -27,23 +27,25 @@ pub trait Resource: Send + Sync + 'static {
 
     fn id() -> ResourceId;
     fn kind() -> ResourceKind;
+    fn label() -> &'static str;
+    fn register();
 }
 
-pub trait EntityComponent: Resource {
-    fn entity_component_id() -> ResourceId;
-}
+// pub trait EntityComponent: Resource {
+    // fn entity_component_id() -> ResourceId;
+// }
 
-impl<C: EntityComponent> Resource for C {
-    type Type = C;
-    type Storage = IdMappedResourceStorage<EntityId, C>;
+// impl<C: EntityComponent> Resource for C {
+//     type Type = C;
+//     type Storage = IdMappedResourceStorage<EntityId, C>;
 
-    fn id() -> ResourceId {
-        return C::entity_component_id();
-    }
-    fn kind() -> ResourceKind {
-        return ResourceKind::EntityComponent;
-    }
-}
+//     fn id() -> ResourceId {
+//         return C::entity_component_id();
+//     }
+//     fn kind() -> ResourceKind {
+//         return ResourceKind::EntityComponent;
+//     }
+// }
 
 pub trait ResourceStorage: Send + Sync + Any {
     fn bind_group_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry>;
@@ -340,17 +342,29 @@ lazy_static! {
         RwLock::new(IdMap::new());
 }
 
-pub fn register_entity_component<C: Resource + 'static>(label: &str) -> ResourceId {
+pub fn register_resource<C: Resource + 'static>() -> ResourceId {
     return REGISTERED_RESOURCES
         .write()
         .unwrap()
         .insert(ResourceRegistration {
-            label: label.to_string(),
+            label: C::label().to_string(),
             kind: ResourceKind::EntityComponent,
             storage_factory: IdMappedResourceStorage::<EntityId, C>::factory,
         })
         .0;
 }
+
+// pub fn register_viewport_component<C: Resource + 'static>(label: &str) -> ResourceId {
+//     return REGISTERED_RESOURCES
+//         .write()
+//         .unwrap()
+//         .insert(ResourceRegistration {
+//             label: label.to_string(),
+//             kind: ResourceKind::EntityComponent,
+//             storage_factory: IdMappedResourceStorage::<EntityId, C>::factory,
+//         })
+//         .0;
+// }
 
 pub fn make_resource_storages(instance: &Instance) -> Vec<Option<Box<dyn ResourceStorage>>> {
     let mut vec = Vec::new();
@@ -388,9 +402,24 @@ mod test {
     #[derive(Debug)]
     struct R(Arc<u32>);
 
-    impl EntityComponent for R {
-        fn entity_component_id() -> ResourceId {
-            todo!();
+    impl Resource for R {
+        type Type = R;
+        type Storage = IdMappedResourceStorage<EntityId, R>;
+
+        fn id() -> ResourceId {
+            todo!()
+        }
+
+        fn kind() -> ResourceKind {
+            todo!()
+        }
+
+        fn label() -> &'static str {
+            todo!()
+        }
+
+        fn register() {
+            todo!()
         }
     }
 
