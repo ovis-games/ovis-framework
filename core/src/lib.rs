@@ -1,6 +1,8 @@
 #![feature(inherent_associated_types)]
 #![feature(const_trait_impl)]
 #![feature(trait_upcasting)]
+#![feature(let_chains)]
+#![feature(maybe_uninit_slice)]
 
 mod versioned_index_id;
 pub use versioned_index_id::*;

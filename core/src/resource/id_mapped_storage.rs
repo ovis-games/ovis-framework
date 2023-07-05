@@ -1,62 +1,8 @@
-use crate::{EntityId, Gpu, IdMap, Instance, StandardVersionedIndexId, VersionedIndexId};
-use lazy_static::lazy_static;
-use std::{
-    any::Any,
-    mem::MaybeUninit,
-    sync::{Arc, RwLock},
-};
+use std::{mem::MaybeUninit, sync::Arc};
 
-pub enum ResourceKind {
-    Event,
-    SceneComponent,
-    EntityComponent,
-    ViewportComponent,
-}
+use crate::{ResourceId, VersionedIndexId, Resource, ResourceStorage, Gpu};
 
-pub mod bind_group_index {
-    const SYSTEM: u32 = 0;
-    const COMPONENTS: u32 = 1;
-    // const REVERSE_ARRAY: u32 = 2;
-}
-
-pub type ResourceId = StandardVersionedIndexId<8>;
-
-pub trait Resource: Send + Sync + 'static {
-    type Type;
-    type Storage: ResourceStorage;
-
-    fn id() -> ResourceId;
-    fn kind() -> ResourceKind;
-    fn label() -> &'static str;
-    fn register();
-}
-
-// pub trait EntityComponent: Resource {
-    // fn entity_component_id() -> ResourceId;
-// }
-
-// impl<C: EntityComponent> Resource for C {
-//     type Type = C;
-//     type Storage = IdMappedResourceStorage<EntityId, C>;
-
-//     fn id() -> ResourceId {
-//         return C::entity_component_id();
-//     }
-//     fn kind() -> ResourceKind {
-//         return ResourceKind::EntityComponent;
-//     }
-// }
-
-pub trait ResourceStorage: Send + Sync + Any {
-    fn bind_group_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry>;
-    fn bind_group_entries(&self, gpu_index: usize) -> Vec<wgpu::BindGroupEntry>;
-}
-
-struct GpuResourceBuffer {
-    gpu: Arc<Gpu>,
-    resource_buffer: wgpu::Buffer,
-    reverse_array: wgpu::Buffer,
-}
+use super::GpuResourceBuffer;
 
 pub struct IdMappedResourceStorage<Id: VersionedIndexId, R: Resource> {
     // Stores all the resources. Note: not all slots contain valid resources for indices.
@@ -69,7 +15,7 @@ pub struct IdMappedResourceStorage<Id: VersionedIndexId, R: Resource> {
     //
     //                  0 1 2 3 4 5 6 7 8 9
     //
-    // resource:      [C C X C X X C]
+    // resource:       [C C X C X X C]
     // forward_array:  [0 5 5 3 X 4 8]
     // reverse_array:  [0 X X 3 X 1 X X 5 X]
     // free_list_head: 2
@@ -150,17 +96,14 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> IdMappedResourceStor
 
     pub fn new(gpus: &[Arc<Gpu>], resource_id: ResourceId) -> Self {
         let gpu_buffers = gpus.iter().map(|gpu| {
-            let resources = REGISTERED_RESOURCES.read().unwrap();
-            let resource = resources.get(resource_id).unwrap();
-
             let resource_buffer = gpu.device().create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("{} array", resource.label)),
+                label: Some(&format!("{} array", R::label())),
                 size: Self::INITIAL_BUFFER_SIZE,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             let reverse_array = gpu.device().create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("{} reverse array", resource.label)),
+                label: Some(&format!("{} reverse array", R::label())),
                 size: Self::INITIAL_BUFFER_SIZE,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -328,123 +271,5 @@ impl<'a, Id: VersionedIndexId + 'static, R: Resource + 'static> Iterator
             }
             None => None,
         }
-    }
-}
-
-struct ResourceRegistration {
-    label: String,
-    kind: ResourceKind,
-    storage_factory: fn(gpus: &[Arc<Gpu>], resource_id: ResourceId) -> Box<dyn ResourceStorage>,
-}
-
-lazy_static! {
-    static ref REGISTERED_RESOURCES: RwLock<IdMap<ResourceId, ResourceRegistration>> =
-        RwLock::new(IdMap::new());
-}
-
-pub fn register_resource<C: Resource + 'static>() -> ResourceId {
-    return REGISTERED_RESOURCES
-        .write()
-        .unwrap()
-        .insert(ResourceRegistration {
-            label: C::label().to_string(),
-            kind: ResourceKind::EntityComponent,
-            storage_factory: IdMappedResourceStorage::<EntityId, C>::factory,
-        })
-        .0;
-}
-
-// pub fn register_viewport_component<C: Resource + 'static>(label: &str) -> ResourceId {
-//     return REGISTERED_RESOURCES
-//         .write()
-//         .unwrap()
-//         .insert(ResourceRegistration {
-//             label: label.to_string(),
-//             kind: ResourceKind::EntityComponent,
-//             storage_factory: IdMappedResourceStorage::<EntityId, C>::factory,
-//         })
-//         .0;
-// }
-
-pub fn make_resource_storages(instance: &Instance) -> Vec<Option<Box<dyn ResourceStorage>>> {
-    let mut vec = Vec::new();
-
-    println!(
-        "creating resource storages for {} resources",
-        REGISTERED_RESOURCES.read().unwrap().len()
-    );
-
-    for (resource_id, resource) in &*REGISTERED_RESOURCES.read().unwrap() {
-        if resource_id.index() >= vec.len() {
-            vec.resize_with(resource_id.index() + 1, || None);
-        }
-        vec[resource_id.index()] = Some((resource.storage_factory)(&instance.gpus(), resource_id));
-    }
-
-    return vec;
-}
-
-// impl<'a, Id: VersionedIndexId + 'static, R: Resource + 'static> Iterator
-//     for &'a IdMappedResourceStorage<Id, R>
-// {
-//     type Item = (Id, &'a R);
-//     type IntoIter = IdMappedResourceStorageIterator<'a, Id, R>;
-
-//     fn into_iter(self) -> Self::IntoIter {
-//         return Self::IntoIter::new(self);
-//     }
-// }
-
-mod test {
-    use super::*;
-    use std::sync::Arc;
-
-    #[derive(Debug)]
-    struct R(Arc<u32>);
-
-    impl Resource for R {
-        type Type = R;
-        type Storage = IdMappedResourceStorage<EntityId, R>;
-
-        fn id() -> ResourceId {
-            todo!()
-        }
-
-        fn kind() -> ResourceKind {
-            todo!()
-        }
-
-        fn label() -> &'static str {
-            todo!()
-        }
-
-        fn register() {
-            todo!()
-        }
-    }
-
-    #[test]
-    fn test() {
-        type Id = StandardVersionedIndexId;
-        let mut resource_storage =
-            IdMappedResourceStorage::<Id, R>::new(&[], ResourceId::from_index(100));
-
-        let id = Id::from_index(0);
-        assert!(resource_storage.insert(id, R(Arc::new(100))).is_none());
-
-        let recv = resource_storage.get(id);
-        assert!(recv.is_some());
-        assert_eq!(*recv.unwrap().0, 100);
-
-        let recv = resource_storage.insert(id, R(Arc::new(200)));
-        assert!(recv.is_some());
-        assert_eq!(*recv.unwrap().0, 100);
-
-        let recv = resource_storage.remove(id);
-        assert!(recv.is_some());
-        assert_eq!(*recv.unwrap().0, 200);
-
-        let recv = resource_storage.get(id);
-        assert!(recv.is_none());
     }
 }
