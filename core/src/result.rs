@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+#[derive(Debug)]
 pub enum SourceLocation {
     TextFile { filename: String, line: u32 },
     JobFile { filename: String, path: String },
@@ -22,6 +23,7 @@ impl Display for SourceLocation {
     }
 }
 
+#[derive(Debug)]
 pub struct Error {
     message: String,
     source: SourceLocation,

@@ -1,51 +1,58 @@
 use ovis_core::{
-    add_job_dependency, register_job, wgpu, EntityId, Error, JobId, JobKind, Resource,
-    ResourceAccess, SceneState, SystemResources,
+    add_job_dependency, register_job, wgpu, Error, JobId, JobKind, Resource,
+    SceneState, SystemResources,
 };
-use ovis_macros::resource;
+use serde::{Deserialize, Serialize};
+use ovis_macros::{resource, array_resource, job};
 
+pub type Vec2 = glam::Vec2;
 pub type Vec3 = glam::Vec3A;
+pub type Vec4 = glam::Vec4;
 pub type Quat = glam::Quat;
 pub type Affine3A = glam::Affine3A;
 pub type Mat4 = glam::Mat4;
 
 #[resource(EntityComponent)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct LocalToParent(Affine3A);
 
-impl std::ops::Deref for LocalToParent {
-    type Target = Affine3A;
+// impl std::ops::Deref for LocalToParent {
+//     type Target = Affine3A;
 
-    fn deref(&self) -> &Self::Target {
-        return &self.0;
-    }
-}
+//     fn deref(&self) -> &Self::Target {
+//         return &self.0;
+//     }
+// }
+
+// #[resource(EntityComponent)]
+// #[derive(Serialize, Deserialize)]
+// pub struct LocalToWorld(Affine3A);
+
+// #[resource(EntityComponent)]
+// #[derive(Serialize, Deserialize)]
+// pub type WorldToCamera = Affine3A;
+
+// #[resource(EntityComponent)]
+// #[derive(Serialize, Deserialize)]
+// pub type CameraToClip = Mat4;
 
 #[resource(EntityComponent)]
-pub struct LocalToWorld(Affine3A);
-
-#[resource(EntityComponent)]
-pub type WorldToCamera = Affine3A;
-
-#[resource(EntityComponent)]
-pub type CameraToClip = Mat4;
-
-#[resource(EntityComponent)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,
     pub scaling: Vec3,
 }
 
-#[resource(EntityComponent)]
-pub struct Camera {
-    pub fov: f32,
-    pub near: f32,
-    pub far: f32,
-}
+#[array_resource(EntityComponent)]
+#[derive(Serialize, Deserialize, Default)]
+pub struct VertexPosition(Vec3);
 
-pub type ActiveCamera = EntityId;
+#[array_resource(EntityComponent)]
+#[derive(Serialize, Deserialize, Default)]
+pub struct VertexColor(Vec4);
 
-// #[job]
+#[job]
 fn calculate_local_to_parent(transform: &Transform) -> LocalToParent {
     return LocalToParent(Affine3A::from_scale_rotation_translation(
         transform.scaling.into(),
@@ -54,21 +61,25 @@ fn calculate_local_to_parent(transform: &Transform) -> LocalToParent {
     ));
 }
 
-fn calculate_local_to_world(
-    local_to_parent: &LocalToParent,
-    parent_local_to_world: &LocalToWorld,
-) -> LocalToWorld {
-    LocalToWorld(**local_to_parent)
-    // parent_local_to_world.0
-    // local_to_parent.
-    // return LocalToWorld(local_to_parent.0 * parent_local_to_world.0);
-}
+// #[resource(EntityComponent)]
+// #[derive(Serialize, Deserialize)]
+// pub struct Camera {
+//     pub fov: f32,
+//     pub near: f32,
+//     pub far: f32,
+// }
 
-#[resource(EntityComponent)]
-pub struct Position {
-    pub x: f32,
-    pub y: f32,
-}
+// pub type ActiveCamera = EntityId;
+
+// fn calculate_local_to_world(
+//     local_to_parent: &LocalToParent,
+//     parent_local_to_world: &LocalToWorld,
+// ) -> LocalToWorld {
+//     LocalToWorld(**local_to_parent)
+//     // parent_local_to_world.0
+//     // local_to_parent.
+//     // return LocalToWorld(local_to_parent.0 * parent_local_to_world.0);
+// }
 
 // pub fn foo(x: &mut Mat4) {
 // x = Mat4::perspective_lh(1.0, 1.0, 1.0, 1.0).into();
@@ -132,8 +143,10 @@ pub fn draw_triangles(sr: &SystemResources, s: &SceneState) -> Result<(), Error>
             },
         });
     {
-        let position_storage = s.resource_storage_mut::<Position>().unwrap(); // TODO: mut not necessary here
-        position_storage.update_gpu_buffers();
+        // s.
+        // for 
+        // let position_storage = s.resource_storage_mut::<Position>().unwrap(); // TODO: mut not necessary here
+        // position_storage.update_gpu_buffers();
 
         // for (id, p) in position_storage.iter() {
         //     println!("{}: ({}, {})", id, p.x, p.y);
@@ -158,13 +171,15 @@ pub fn draw_triangles(sr: &SystemResources, s: &SceneState) -> Result<(), Error>
 
 pub fn load_runtime() {
     unsafe {
-        Position::register();
-        // POSITION_ID = register_entity_component::<Position>("ovis::runtime::Position");
+        Transform::register();
+        VertexPosition::register();
+        VertexColor::register();
+
         CLEAR_SURFACE_ID = register_job(JobKind::Update, clear_surface, &[]);
         DRAW_TRIANGLES_ID = register_job(
             JobKind::Update,
             draw_triangles,
-            &[ResourceAccess::Read(POSITION_ID)],
+            &[],
         );
         add_job_dependency(DRAW_TRIANGLES_ID, CLEAR_SURFACE_ID);
     }

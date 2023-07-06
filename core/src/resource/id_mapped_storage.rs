@@ -1,6 +1,8 @@
 use std::{mem::MaybeUninit, sync::Arc};
 
-use crate::{ResourceId, VersionedIndexId, Resource, ResourceStorage, Gpu};
+use erased_serde::Deserializer;
+
+use crate::{ResourceId, VersionedIndexId, Resource, ResourceStorage, Gpu, BindingProvider, EntityComponentResourceStorage, EntityId};
 
 use super::GpuResourceBuffer;
 
@@ -38,7 +40,7 @@ pub struct IdMappedResourceStorage<Id: VersionedIndexId, R: Resource> {
     resource_id: ResourceId,
 }
 
-impl<Id: VersionedIndexId + 'static, R: Resource + 'static> ResourceStorage
+impl<Id: VersionedIndexId + 'static, R: Resource + 'static> BindingProvider
     for IdMappedResourceStorage<Id, R>
 {
     fn bind_group_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
@@ -87,6 +89,17 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> ResourceStorage
                 }),
             },
         ];
+    }
+}
+
+impl<R: Resource> EntityComponentResourceStorage for IdMappedResourceStorage<EntityId, R> {
+    fn insert_default(&mut self, entity_id: EntityId) {
+        self.insert(entity_id, R::default());
+    }
+
+    fn insert_serialized(&mut self, entity_id: EntityId, d: &mut dyn Deserializer) -> erased_serde::Result<()> {
+        self.insert(entity_id, erased_serde::deserialize(d)?);
+        return Ok(());
     }
 }
 
@@ -217,9 +230,9 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> IdMappedResourceStor
         return IdMappedResourceStorageIterator::new(self);
     }
 
-    pub fn factory(gpus: &[Arc<Gpu>], resource_id: ResourceId) -> Box<dyn ResourceStorage> {
-        return Box::new(Self::new(gpus, resource_id));
-    }
+    // pub fn factory(gpus: &[Arc<Gpu>], resource_id: ResourceId) -> Box<dyn ResourceStorage> {
+    //     return Box::new(Self::new(gpus, resource_id));
+    // }
 }
 
 pub struct IdMappedResourceStorageIterator<

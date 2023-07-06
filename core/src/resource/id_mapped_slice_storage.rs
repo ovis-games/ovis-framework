@@ -1,6 +1,8 @@
 use std::{collections::HashMap, mem::MaybeUninit, sync::Arc};
 
-use crate::{Gpu, Resource, ResourceId, ResourceStorage, VersionedIndexId};
+use erased_serde::Deserializer;
+
+use crate::{Gpu, Resource, ResourceId, ResourceStorage, VersionedIndexId, BindingProvider, EntityComponentResourceStorage, EntityId};
 
 #[derive(Clone, Copy)]
 struct UsedBlock<Id: VersionedIndexId> {
@@ -121,6 +123,20 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> IdMappedResourceSlic
         }
     }
 
+    pub fn insert(&mut self, id: Id, resources: Vec<R>) {
+        if let Some(block) = self.used_blocks.get(&id.index()) {
+            let block = *block;
+            self.free_block(&block);
+        }
+
+        let mut block = self.allocate_block(resources.len());
+        block.size = resources.len();
+        for (i, resource) in resources.into_iter().enumerate() {
+            self.resources[block.offset + i].write(resource);
+        }
+        self.used_blocks.insert(id.index(), block);
+    }
+
     // pub fn insert<I: Iterator<Item = R>>(&mut self, id: Id, resources: I, capacity: Option<usize>) {
     //     if let Some(block) = self.used_blocks.get(&id.index()) {
     //         let block = *block;
@@ -133,6 +149,7 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> IdMappedResourceSlic
     // }
 
     pub fn push(&mut self, id: Id, resource: R) {
+        todo!();
         // self.used_blocks
     }
 
@@ -180,9 +197,9 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> IdMappedResourceSlic
     //     todo!();
     // }
 
-    pub fn factory(gpus: &[Arc<Gpu>], resource_id: ResourceId) -> Box<dyn ResourceStorage> {
-        return Box::new(Self::new(gpus, resource_id));
-    }
+    // pub fn factory(gpus: &[Arc<Gpu>], resource_id: ResourceId) -> Box<dyn ResourceStorage> {
+    //     return Box::new(Self::new(gpus, resource_id));
+    // }
 }
 
 
@@ -206,37 +223,39 @@ impl<Id: VersionedIndexId + 'static, R: Clone + Resource + 'static> IdMappedReso
 
 }
 
-impl<Id: VersionedIndexId + 'static, R: Resource + 'static> ResourceStorage
+impl<Id: VersionedIndexId + 'static, R: Resource + 'static> BindingProvider
     for IdMappedResourceSliceStorage<Id, R>
 {
     fn bind_group_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
-        let base_binding: u32 = (4 * self.resource_id.index()).try_into().unwrap();
-        return vec![
-            wgpu::BindGroupLayoutEntry {
-                binding: base_binding + 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: base_binding + 1,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ];
+        return vec![];
+        // let base_binding: u32 = (4 * self.resource_id.index()).try_into().unwrap();
+        // return vec![
+        //     wgpu::BindGroupLayoutEntry {
+        //         binding: base_binding + 0,
+        //         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        //         ty: wgpu::BindingType::Buffer {
+        //             ty: wgpu::BufferBindingType::Storage { read_only: true },
+        //             has_dynamic_offset: false,
+        //             min_binding_size: None,
+        //         },
+        //         count: None,
+        //     },
+        //     wgpu::BindGroupLayoutEntry {
+        //         binding: base_binding + 1,
+        //         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        //         ty: wgpu::BindingType::Buffer {
+        //             ty: wgpu::BufferBindingType::Storage { read_only: true },
+        //             has_dynamic_offset: false,
+        //             min_binding_size: None,
+        //         },
+        //         count: None,
+        //     },
+        // ];
     }
 
     fn bind_group_entries(&self, gpu_index: usize) -> Vec<wgpu::BindGroupEntry> {
-        todo!();
+        return vec![];
+        // todo!();
         // let base_binding: u32 = (4 * self.resource_id.index()).try_into().unwrap();
         // return vec![
         //     wgpu::BindGroupEntry {
@@ -259,15 +278,28 @@ impl<Id: VersionedIndexId + 'static, R: Resource + 'static> ResourceStorage
     }
 }
 
+impl<R: Resource> EntityComponentResourceStorage for IdMappedResourceSliceStorage<EntityId, R> {
+    fn insert_default(&mut self, entity_id: EntityId) {
+        self.insert(entity_id, vec![]);
+    }
+
+    fn insert_serialized(&mut self, entity_id: EntityId, d: &mut dyn Deserializer) -> erased_serde::Result<()> {
+        // TODO: find a way to directly deserialize into the buffer
+        self.insert(entity_id, erased_serde::deserialize(d)?);
+        return Ok(());
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use serde::{Deserialize, Serialize};
+
     use crate::{Resource, EntityId, IdMappedResourceSliceStorage, ResourceId, ResourceKind};
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
     struct TestResource {
         number: u32,
     }
-
     impl Resource for TestResource {
         type Type = Self;
         type Storage = IdMappedResourceSliceStorage<EntityId, Self>;

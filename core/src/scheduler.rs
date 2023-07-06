@@ -331,21 +331,21 @@ impl Scheduler {
 
         for (job_index, job) in self.jobs.iter().enumerate() {
             for (viewport_id, viewport) in &*viewports {
-                let mut resource_storages = Vec::new();
+                // let mut resource_storages = Vec::new();
 
-                for access in &job.resource_access {
-                    match access {
-                        ResourceAccess::Read(resource_id) => {
-                            resource_storages.push(
-                                self.state
-                                    .resource_storage(*resource_id)
-                                    .unwrap()
-                                    .read()
-                                    .unwrap(),
-                            );
-                        }
-                    }
-                }
+                // for access in &job.resource_access {
+                //     match access {
+                //         ResourceAccess::Read(resource_id) => {
+                //             resource_storages.push(
+                //                 self.state
+                //                     .resource_storage(*resource_id)
+                //                     .unwrap()
+                //                     .read()
+                //                     .unwrap(),
+                //             );
+                //         }
+                //     }
+                // }
 
                 let render_pipeline_layout = viewport.gpu().device().create_pipeline_layout(
                     &wgpu::PipelineLayoutDescriptor {

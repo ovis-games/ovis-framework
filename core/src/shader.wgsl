@@ -1,20 +1,28 @@
-@group(0) @binding(0)
-var<uniform> entity_index: u32;
+/* @group(0) @binding(0) */
+/* var<uniform> entity_index: u32; */
 
-@group(1) @binding(0)
-var<storage, read> positions: array<vec2<f32>>;
-@group(1) @binding(1)
-var<storage, read> positions_index: array<u32>;
+/* @group(1) @binding(0) */
+/* var<storage, read> positions: array<vec2<f32>>; */
+/* @group(1) @binding(1) */
+/* var<storage, read> positions_index: array<u32>; */
 
-@group(1) @binding(4)
-var<storage, read> colors: array<vec4<f32>>;
-@group(1) @binding(5)
-var<storage, read> colors_index: array<u32>;
+/* @group(1) @binding(4) */
+/* var<storage, read> colors: array<vec4<f32>>; */
+/* @group(1) @binding(5) */
+/* var<storage, read> colors_index: array<u32>; */
+
+/* @group(1) @binding(4) */
+/* var<storage, read> colors: array<vec4<f32>>; */
+/* @group(1) @binding(4) */
+/* var<storage, read> colors2: array<vec4<f32>>; */
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) instance_index: u32,
 };
+
+@vertex
+fn ovis_runtime_drawTriangles_vertex();
 
 @vertex
 fn vs_main(
@@ -31,7 +39,8 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var position = positions[positions_index[in.instance_index] & 0xffffffu];
+    /* var position = positions[positions_index[in.instance_index] & 0xffffffu]; */
 
-    return vec4<f32>(position, 0.1, 1.0);
+    /* return vec4<f32>(position, 0.1, 1.0); */
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }
